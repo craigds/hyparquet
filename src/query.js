@@ -18,7 +18,7 @@ export async function parquetQuery(options) {
   }
   options.metadata ??= await parquetMetadataAsync(options.file)
 
-  const { metadata, rowStart = 0, columns, orderBy, filter } = options
+  const { metadata, rowStart = 0, columns, orderBy, filter, returnStats = false } = options
   if (rowStart < 0) throw new Error('parquet rowStart must be positive')
   const rowEnd = options.rowEnd ?? Number(metadata.num_rows)
 
@@ -43,6 +43,11 @@ export async function parquetQuery(options) {
     // iterate through row groups and filter until we have enough rows
     const filteredRows = new Array()
     let groupStart = 0
+    let rowsProcessed = 0
+    let groupsProcessed = 0
+    const totalRows = Number(metadata.num_rows)
+    const totalGroups = metadata.row_groups.length
+
     for (const group of metadata.row_groups) {
       const groupEnd = groupStart + Number(group.num_rows)
       // TODO: if expected > group size, start fetching next groups
@@ -52,6 +57,9 @@ export async function parquetQuery(options) {
         rowEnd: groupEnd,
         columns: relevantColumns,
       })
+      rowsProcessed += Number(group.num_rows)
+      groupsProcessed++
+
       for (const row of groupData) {
         if (matchQuery(row, filter)) {
           if (requiresProjection && relevantColumns) {
@@ -67,7 +75,28 @@ export async function parquetQuery(options) {
       if (filteredRows.length >= rowEnd) break
       groupStart = groupEnd
     }
-    return filteredRows.slice(rowStart, rowEnd)
+
+    const results = filteredRows.slice(rowStart, rowEnd)
+
+    if (returnStats) {
+      // Calculate approximation based on how much data we processed
+      const hitRate = filteredRows.length / rowsProcessed
+      const approximateTotal = Math.round(hitRate * totalRows)
+      return {
+        results,
+        stats: {
+          exactCount: filteredRows.length,
+          approximateTotal,
+          rowsProcessed,
+          totalRows,
+          groupsProcessed,
+          totalGroups,
+          hitRate
+        }
+      }
+    }
+
+    return results
   } else if (filter) {
     // read all rows, sort, and filter
     const results = await parquetReadObjects({
@@ -203,28 +232,28 @@ export function matchQuery(record, query = {}) {
 
     return Object.entries(condition || {}).every(([operator, target]) => {
       switch (operator) {
-      case '$gt':
-        return value > target
-      case '$gte':
-        return value >= target
-      case '$lt':
-        return value < target
-      case '$lte':
-        return value <= target
-      case '$eq':
-        return equals(value, target)
-      case '$ne':
-        return !equals(value, target)
-      case '$in':
-        return Array.isArray(target) && target.includes(value)
-      case '$nin':
-        return Array.isArray(target) && !target.includes(value)
-      case '$not':
-        return !matchQuery({ [field]: value }, { [field]: target })
-      case '$regex':
-        return (value === null || value === undefined) ? false : value.match(target)
-      default:
-        return true
+        case '$gt':
+          return value > target
+        case '$gte':
+          return value >= target
+        case '$lt':
+          return value < target
+        case '$lte':
+          return value <= target
+        case '$eq':
+          return equals(value, target)
+        case '$ne':
+          return !equals(value, target)
+        case '$in':
+          return Array.isArray(target) && target.includes(value)
+        case '$nin':
+          return Array.isArray(target) && !target.includes(value)
+        case '$not':
+          return !matchQuery({ [field]: value }, { [field]: target })
+        case '$regex':
+          return (value === null || value === undefined) ? false : value.match(target)
+        default:
+          return true
       }
     })
   })
