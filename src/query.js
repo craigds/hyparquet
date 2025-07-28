@@ -221,6 +221,8 @@ export function matchQuery(record, query = {}) {
         return Array.isArray(target) && !target.includes(value)
       case '$not':
         return !matchQuery({ [field]: value }, { [field]: target })
+      case '$regex':
+        return (value === null || value === undefined) ? false : value.match(target)
       default:
         return true
       }

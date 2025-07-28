@@ -53,6 +53,7 @@ export type ParquetQueryOperator = {
   $in?: ParquetQueryValue[]
   $nin?: ParquetQueryValue[]
   $not?: ParquetQueryOperator
+  $regex?: RegExp
 }
 
 /**
